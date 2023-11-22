@@ -25,8 +25,8 @@ def lambda_handler(event, context):
     """Handles the creation of a EDL bearer token."""
     
     logger = get_logger()
-    token_url = "https://uat.urs.earthdata.nasa.gov/api/users/token"
-    delete_token_url = "https://uat.urs.earthdata.nasa.gov/api/users/revoke_token?token"
+    token_url = "https://urs.earthdata.nasa.gov/api/users/token"
+    delete_token_url = "https://urs.earthdata.nasa.gov/api/users/revoke_token?token"
     logger.info("Attempting to create token.")
     
     try:
