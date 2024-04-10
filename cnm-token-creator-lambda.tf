@@ -7,6 +7,9 @@ resource "aws_lambda_function" "aws_lambda_cmr" {
   runtime          = "python3.9"
   source_code_hash = filebase64sha256("cmr_token_creator.zip")
   timeout          = 300
+  tags = {
+    "Name" = "${var.prefix}-cmr-token-creator"
+  }
 }
 
 # AWS Lambda execution role & policy
