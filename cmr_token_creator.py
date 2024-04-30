@@ -20,24 +20,34 @@ from requests.auth import HTTPBasicAuth
 
 # Constants
 HEADERS = {"Accept": "application/json"}
+TOPIC_STRING = "batch-job-failure"
 
 def lambda_handler(event, context):
     """Handles the creation of a EDL bearer token."""
     
     logger = get_logger()
-    token_url = "https://urs.earthdata.nasa.gov/api/users/token"
-    delete_token_url = "https://urs.earthdata.nasa.gov/api/users/revoke_token?token"
-    logger.info("Attempting to create token.")
+    print(event)
+    
+    # if event["prefix"].endswith("-sit") or event["prefix"].endswith("-uat"):
+    if True:
+    
+        token_url = "https://uat.urs.earthdata.nasa.gov/api/users/token"
+        delete_token_url = "https://uat.urs.earthdata.nasa.gov/api/users/revoke_token?token"
+        logger.info("Attempting to create token for UAT environment.")
+    else:
+        token_url = "https://urs.earthdata.nasa.gov/api/users/token"
+        delete_token_url = "https://urs.earthdata.nasa.gov/api/users/revoke_token?token"
+        logger.info("Attempting to create token for OPS environment.")
     
     try:
         username, password = get_edl_creds(logger)
         token = generate_token(username, password, token_url, delete_token_url, logger)
         store_token(token, event["prefix"], logger)
         if not token:
-            logger.info("Program exiting.")
+            publish_event("ERROR", "Issue generating and storing bearer token.", "", logger)
             sys.exit(1)
-    except botocore.exceptions.ClientError:
-        logger.info("Program exiting.")
+    except botocore.exceptions.ClientError as error:
+        publish_event("ERROR", error, "", logger)
         sys.exit(1)
         
 def get_logger():
@@ -88,6 +98,7 @@ def generate_token(username, password, token_url, delete_token_url, logger):
     post_response = requests.post(token_url, headers=HEADERS, auth=HTTPBasicAuth(username, password))
     token_data = post_response.json()
     if "error" in token_data.keys(): 
+        print(token_data)
         if token_data["error"] == "max_token_limit": 
             token = handle_token_error(token_data, username, password, token_url, delete_token_url, logger)
         else:
@@ -98,7 +109,7 @@ def generate_token(username, password, token_url, delete_token_url, logger):
     logger.info("Successfully generated EDL bearer token.")
     return token
     
-def handle_token_error(token_data, username, password, token_url, delete_token_url, logger):
+def handle_token_error(token_data, username, password, token_url, delete_token_url,  logger):
     """Attempts to handle errors encoutered in token generation and return a
     valid bearer token."""
     
@@ -124,7 +135,7 @@ def store_token(token, prefix, logger):
     try:
         
         kms_client = boto3.client('kms', region_name="us-west-2")
-        kms_response = kms_client.describe_key(KeyId=f"alias/{prefix}-ssm-parameter-store")
+        kms_response = kms_client.describe_key(KeyId="alias/ntebaldi-ssm-parameter-store")
         key = kms_response["KeyMetadata"]["KeyId"]
         
         ssm_client = boto3.client('ssm', region_name="us-west-2")
@@ -142,3 +153,43 @@ def store_token(token, prefix, logger):
         logger.error("Could not store EDL bearer token in SSM Parameter Store.")
         logger.error(error)
         raise error
+    
+def publish_event(sigevent_type, sigevent_description, sigevent_data, logger):
+    """Publish event to SNS Topic."""
+    
+    sns = boto3.client("sns")
+    
+    # Get topic ARN
+    try:
+        topics = sns.list_topics()
+    except botocore.exceptions.ClientError as e:
+        logger.error("Failed to list SNS Topics.")
+        logger.error(f"Error - {e}")
+        sys.exit(1)
+    for topic in topics["Topics"]:
+        if TOPIC_STRING in topic["TopicArn"]:
+            topic_arn = topic["TopicArn"]
+            
+    # Publish to topic
+    subject = f"Generate Token Creator Lambda Failure"
+    message = f"The Generate Token Creator has encountered an error.\n" \
+        + f"Log file: {os.getenv('AWS_LAMBDA_LOG_GROUP_NAME')}/{os.getenv('AWS_LAMBDA_LOG_STREAM_NAME')}.\n" \
+        + f"Error type: {sigevent_type}.\n" \
+        + f"Error description: {sigevent_description}\n"
+    if sigevent_data != "": message += f"Error data: {sigevent_data}"
+    try:
+        response = sns.publish(
+            TopicArn = topic_arn,
+            Message = message,
+            Subject = subject
+        )
+    except botocore.exceptions.ClientError as e:
+        logger.error(f"Failed to publish to SNS Topic: {topic_arn}.")
+        logger.error(f"Error - {e}")
+        sys.exit(1)
+    
+    
+
+    
+    
+    logger.info(f"Message published to SNS Topic: {topic_arn}.")
